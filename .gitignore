@@ -1,0 +1,5 @@
+.env
+*.crt
+*.key
+*.pem
+ollama-lan-root-ca.crt

@@ -1,0 +1,40 @@
+__GLOBAL_OPTIONS__
+
+{$OLLAMA_HOSTNAME} {
+	__TLS_LINE__
+
+	@api {
+		header_regexp Authorization (?i)^Bearer\s+{$OLLAMA_API_KEY}$
+		remote_ip 127.0.0.1/8 ::1 {$LAN_CIDR}
+	}
+	handle @api {
+		reverse_proxy 127.0.0.1:11434 {
+			flush_interval -1
+			transport http {
+				read_timeout 0
+				write_timeout 0
+				dial_timeout 10s
+			}
+		}
+	}
+
+	@health {
+		path /healthz
+		remote_ip 127.0.0.1/8 ::1 {$LAN_CIDR}
+	}
+	handle @health {
+		respond "ok" 200
+	}
+
+	handle {
+		respond "Unauthorized" 401
+	}
+
+	log {
+		output file /var/log/caddy/ollama-access.log {
+			roll_size 20MiB
+			roll_keep 5
+		}
+		format json
+	}
+}

@@ -1,0 +1,28 @@
+{
+    auto_https disable_redirects
+}
+
+{$OLLAMA_HOSTNAME} {
+    tls {$TLS_CERT_FILE} {$TLS_KEY_FILE}
+
+    @authorized header Authorization "Bearer {$OLLAMA_API_KEY}"
+    handle @authorized {
+        reverse_proxy 127.0.0.1:11434
+    }
+
+    handle /healthz {
+        respond "ok" 200
+    }
+
+    handle {
+        respond "Unauthorized" 401
+    }
+
+    log {
+        output file /var/log/caddy/ollama-access.log {
+            roll_size 20MiB
+            roll_keep 5
+        }
+        format json
+    }
+}

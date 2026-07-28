@@ -104,6 +104,7 @@ case "$TLS_MODE" in
       GLOBAL_OPTIONS+=$'\n\temail '"${ACME_EMAIL}"
     fi
     GLOBAL_OPTIONS+=$'\n\tauto_https disable_redirects\n}'
+    # Route53 sync + longer propagation: default 2m often times out before public resolvers see the TXT.
     TLS_LINE=$'tls {\n\t\tdns route53 {\n\t\t\taccess_key_id {$AWS_ACCESS_KEY_ID}\n\t\t\tsecret_access_key {$AWS_SECRET_ACCESS_KEY}'
     if [[ -n "${AWS_REGION:-}" ]]; then
       TLS_LINE+=$'\n\t\t\tregion {$AWS_REGION}'
@@ -111,7 +112,12 @@ case "$TLS_MODE" in
     if [[ -n "${ROUTE53_HOSTED_ZONE_ID:-}" ]]; then
       TLS_LINE+=$'\n\t\t\thosted_zone_id {$ROUTE53_HOSTED_ZONE_ID}'
     fi
-    TLS_LINE+=$'\n\t\t}\n\t\tresolvers 1.1.1.1\n\t}'
+    TLS_LINE+=$'\n\t\t\twait_for_route53_sync true'
+    TLS_LINE+=$'\n\t\t\troute53_max_wait 5m'
+    TLS_LINE+=$'\n\t\t}\n\t\tresolvers 1.1.1.1 8.8.8.8'
+    TLS_LINE+=$'\n\t\tpropagation_delay 30s'
+    TLS_LINE+=$'\n\t\tpropagation_timeout 5m'
+    TLS_LINE+=$'\n\t}'
     ;;
   internal)
     GLOBAL_OPTIONS+=$'\n\tauto_https disable_redirects\n}'

@@ -15,6 +15,7 @@ systemctl stop caddy ollama 2>/dev/null || true
 
 rm -f /etc/systemd/system/ollama.service.d/override.conf
 rm -f /etc/systemd/system/caddy.service.d/ollama-env.conf
+rm -f /etc/systemd/system/caddy.service.d/route53-binary.conf
 rmdir /etc/systemd/system/ollama.service.d 2>/dev/null || true
 rmdir /etc/systemd/system/caddy.service.d 2>/dev/null || true
 rm -f /etc/ollama-lan.env

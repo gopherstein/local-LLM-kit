@@ -6,7 +6,7 @@ SHELL := /usr/bin/env bash
 help:
 	@printf '%s\n' \
 	  'make configure   Interactive configuration; creates .env' \
-	  'make doctor      Check Ubuntu, architecture, DNS, and GPU visibility' \
+	  'make doctor      Check Ubuntu, GPU, DNS, and HTTPS endpoint health' \
 	  'make install     Install Ollama + Caddy and pull configured models' \
 	  'make export-ca   Export Caddy root CA (TLS_MODE=internal only)' \
 	  'make test        Test HTTPS health and OpenAI-compatible model list' \

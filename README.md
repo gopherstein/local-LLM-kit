@@ -87,9 +87,30 @@ sudo cp ollama-lan-root-ca.crt /usr/local/share/ca-certificates/ollama-lan.crt
 sudo update-ca-certificates
 ```
 
-### Let's Encrypt — only when public DNS points at a public IP
+### Let's Encrypt DNS-01 (Route53) — recommended when DNS is private but on Route53
 
-Choose `letsencrypt` only if a **public** A/AAAA record points at your **WAN** IP and TCP 80 is reachable from the internet. Let's Encrypt will not issue certificates for names that resolve only to private RFC1918 addresses.
+Choose `letsencrypt-dns` during `make configure` when the hostname’s A record points at a **private** LAN IP (by design) but the zone lives in **Route53**.
+
+ACME validates ownership with a TXT record (`_acme-challenge…`), so:
+
+- No public port 80/443 is required
+- The A record may stay `192.168.x.x`
+- Clients get a normal public certificate (no CA install)
+
+The installer builds a custom Caddy binary with [`caddy-dns/route53`](https://github.com/caddy-dns/route53) into `/usr/local/bin/caddy` (needs Go; a few minutes the first time).
+
+You will need an IAM user/key allowed to manage `_acme-challenge` TXT records. A starter policy is in [`config/route53-acme-iam-policy.json`](config/route53-acme-iam-policy.json) — replace `HOSTED_ZONE_ID` with your zone ID.
+
+Optional env values in `.env`:
+
+- `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (required)
+- `AWS_REGION` (default `us-east-1`)
+- `ROUTE53_HOSTED_ZONE_ID` (optional; auto-discovered if omitted)
+- `ACME_EMAIL` (optional expiry notices)
+
+### Let's Encrypt HTTP-01 — only when public DNS points at a public IP
+
+Choose `letsencrypt` only if a **public** A/AAAA record points at your **WAN** IP and TCP 80 is reachable from the internet. Let's Encrypt HTTP-01 will not issue for names that resolve only to private RFC1918 addresses.
 
 Typical pattern:
 
@@ -112,7 +133,7 @@ Rules added:
 
 - Allow TCP **443** from `LAN_CIDR`
 - Deny TCP **11434** (defense in depth if Ollama were ever mis-bound)
-- Allow TCP **80** from anywhere when `TLS_MODE=letsencrypt` (ACME HTTP-01)
+- Allow TCP **80** from anywhere when `TLS_MODE=letsencrypt` (HTTP-01 only; not needed for `letsencrypt-dns`)
 
 Review first:
 

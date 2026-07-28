@@ -21,6 +21,12 @@ if [[ ! "$OLLAMA_API_KEY" =~ ^[A-Za-z0-9_-]+$ ]]; then
   exit 1
 fi
 
+if [[ "$TLS_MODE" == "letsencrypt-dns" ]]; then
+  for required in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
+    [[ -n "${!required:-}" ]] || { echo "$required is required for TLS_MODE=letsencrypt-dns" >&2; exit 1; }
+  done
+fi
+
 ufw_ensure_comment() {
   local comment=$1
   shift
@@ -48,6 +54,12 @@ if ! command -v caddy >/dev/null 2>&1; then
   apt-get install -y caddy
 fi
 
+CADDY_BIN=caddy
+if [[ "$TLS_MODE" == "letsencrypt-dns" ]]; then
+  "$ROOT_DIR/scripts/build-caddy-route53.sh" /usr/local/bin/caddy
+  CADDY_BIN=/usr/local/bin/caddy
+fi
+
 install -m 600 "$ENV_FILE" /etc/ollama-lan.env
 mkdir -p /etc/systemd/system/ollama.service.d /etc/systemd/system/caddy.service.d /var/log/caddy
 # caddy runs as User=caddy; root-owned log files from validate/prior runs cause startup failure
@@ -68,6 +80,13 @@ else
 fi
 install -m 644 "$ROOT_DIR/systemd/caddy-env.conf" /etc/systemd/system/caddy.service.d/ollama-env.conf
 
+if [[ "$TLS_MODE" == "letsencrypt-dns" ]]; then
+  install -m 644 "$ROOT_DIR/systemd/caddy-route53-binary.conf" \
+    /etc/systemd/system/caddy.service.d/route53-binary.conf
+else
+  rm -f /etc/systemd/system/caddy.service.d/route53-binary.conf
+fi
+
 GLOBAL_OPTIONS="{"
 TLS_LINE="# tls: automatic (Let's Encrypt / ZeroSSL)"
 case "$TLS_MODE" in
@@ -80,6 +99,20 @@ case "$TLS_MODE" in
     GLOBAL_OPTIONS+=$'\n\t\tdisable_tlsalpn_challenge'
     GLOBAL_OPTIONS+=$'\n\t}\n}'
     ;;
+  letsencrypt-dns)
+    if [[ -n "${ACME_EMAIL:-}" ]]; then
+      GLOBAL_OPTIONS+=$'\n\temail '"${ACME_EMAIL}"
+    fi
+    GLOBAL_OPTIONS+=$'\n\tauto_https disable_redirects\n}'
+    TLS_LINE=$'tls {\n\t\tdns route53 {\n\t\t\taccess_key_id {$AWS_ACCESS_KEY_ID}\n\t\t\tsecret_access_key {$AWS_SECRET_ACCESS_KEY}'
+    if [[ -n "${AWS_REGION:-}" ]]; then
+      TLS_LINE+=$'\n\t\t\tregion {$AWS_REGION}'
+    fi
+    if [[ -n "${ROUTE53_HOSTED_ZONE_ID:-}" ]]; then
+      TLS_LINE+=$'\n\t\t\thosted_zone_id {$ROUTE53_HOSTED_ZONE_ID}'
+    fi
+    TLS_LINE+=$'\n\t\t}\n\t\tresolvers 1.1.1.1\n\t}'
+    ;;
   internal)
     GLOBAL_OPTIONS+=$'\n\tauto_https disable_redirects\n}'
     TLS_LINE="tls internal"
@@ -90,7 +123,7 @@ case "$TLS_MODE" in
     TLS_LINE="tls ${TLS_CERT_FILE} ${TLS_KEY_FILE}"
     ;;
   *)
-    echo "Unsupported TLS_MODE: $TLS_MODE" >&2
+    echo "Unsupported TLS_MODE: $TLS_MODE (use internal, letsencrypt, letsencrypt-dns, or custom)" >&2
     exit 1
     ;;
 esac
@@ -110,7 +143,7 @@ set -a
 # shellcheck disable=SC1091
 source /etc/ollama-lan.env
 set +a
-caddy validate --config /etc/caddy/Caddyfile
+"$CADDY_BIN" validate --config /etc/caddy/Caddyfile
 # validate may create log files as root — fix ownership before service start
 chown -R caddy:caddy /var/log/caddy
 systemctl daemon-reload
@@ -151,8 +184,12 @@ echo "Endpoint: https://$OLLAMA_HOSTNAME"
 echo "Ollama remains bound to 127.0.0.1; Caddy is the only LAN-facing service."
 case "$TLS_MODE" in
   letsencrypt)
-    echo "Let's Encrypt: ensure public DNS for $OLLAMA_HOSTNAME points here and TCP 80 is reachable."
+    echo "Let's Encrypt HTTP-01: public WAN A record + TCP 80 required."
     echo "Certificate issuance may take a minute; check: journalctl -u caddy -n 50"
+    ;;
+  letsencrypt-dns)
+    echo "Let's Encrypt DNS-01 via Route53: no public HTTP needed; A record may be private."
+    echo "Watch issuance: journalctl -u caddy -f"
     ;;
   internal)
     echo "Next: make export-ca, then install the CA on each client device."

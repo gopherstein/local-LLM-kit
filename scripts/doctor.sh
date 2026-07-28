@@ -79,18 +79,32 @@ PY
       pub_ip=$(dig +short "$OLLAMA_HOSTNAME" A @1.1.1.1 2>/dev/null | awk 'NR==1 && $1 ~ /^[0-9.]+$/ {print; exit}')
     fi
     if [[ -z "$pub_ip" ]]; then
-      warn "Public DNS:" "$OLLAMA_HOSTNAME has no A record at 1.1.1.1 — Let's Encrypt cannot issue"
+      warn "Public DNS:" "$OLLAMA_HOSTNAME has no A record at 1.1.1.1 — Let's Encrypt HTTP-01 cannot issue"
       fail=1
     elif python3 - "$pub_ip" <<'PY'
 import ipaddress, sys
 sys.exit(0 if ipaddress.ip_address(sys.argv[1]).is_private else 1)
 PY
     then
-      warn "Public DNS:" "$OLLAMA_HOSTNAME → $pub_ip (private). Let's Encrypt cannot issue for RFC1918 addresses."
-      warn "Fix:" "use TLS_MODE=internal (LAN-only), or point public DNS at a real WAN IP"
+      warn "Public DNS:" "$OLLAMA_HOSTNAME → $pub_ip (private). HTTP-01 cannot issue; use TLS_MODE=letsencrypt-dns or internal"
       fail=1
     else
       echo "Public DNS $OLLAMA_HOSTNAME: $pub_ip"
+    fi
+  fi
+  if [[ "${TLS_MODE:-}" == "letsencrypt-dns" ]]; then
+    if [[ -n "${AWS_ACCESS_KEY_ID:-}" && -n "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
+      echo "Route53 DNS-01: AWS credentials present"
+    else
+      warn "Route53 DNS-01:" "AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY missing in .env"
+      fail=1
+    fi
+    caddy_check=caddy
+    [[ -x /usr/local/bin/caddy ]] && caddy_check=/usr/local/bin/caddy
+    if command -v "$caddy_check" >/dev/null 2>&1 && "$caddy_check" list-modules 2>/dev/null | grep -q 'dns.providers.route53'; then
+      echo "Caddy Route53 module: present ($caddy_check)"
+    else
+      warn "Caddy Route53 module:" "missing — run make install (builds custom Caddy)"
     fi
   fi
 else

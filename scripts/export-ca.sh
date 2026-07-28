@@ -7,6 +7,7 @@ source .env
 
 if [[ "${TLS_MODE:-}" != "internal" ]]; then
   echo "export-ca only applies to TLS_MODE=internal (current: ${TLS_MODE:-unset})" >&2
+  echo "letsencrypt / letsencrypt-dns use publicly trusted certs — no CA export needed." >&2
   exit 1
 fi
 

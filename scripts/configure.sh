@@ -8,6 +8,17 @@ read_default() {
   printf '%s' "${var:-$default}"
 }
 
+read_secret() {
+  local prompt="$1" default="${2:-}" var
+  if [[ -n "$default" ]]; then
+    read -r -s -p "$prompt [enter keeps existing]: " var
+  else
+    read -r -s -p "$prompt: " var
+  fi
+  echo
+  printf '%s' "${var:-$default}"
+}
+
 guess_lan_cidr() {
   local ip
   ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')
@@ -23,20 +34,38 @@ LAN_CIDR_VALUE=$(read_default "Allowed LAN CIDR" "$(guess_lan_cidr)")
 MODELS_VALUE=$(read_default "Comma-separated models" "qwen3-coder:30b,qwen2.5-coder:7b")
 echo
 echo "TLS modes:"
-echo "  internal     — LAN-only / private DNS (default; trust exported CA on clients)"
-echo "  letsencrypt  — needs a public A/AAAA record to a public WAN IP + port 80"
-echo "  custom       — your own cert/key files"
-TLS_MODE_VALUE=$(read_default "TLS mode (internal/letsencrypt/custom)" "internal")
+echo "  internal          — LAN-only / private DNS (trust exported CA on clients)"
+echo "  letsencrypt-dns   — Let's Encrypt DNS-01 via Route53 (best for private A records)"
+echo "  letsencrypt       — Let's Encrypt HTTP-01 (needs public WAN A record + port 80)"
+echo "  custom            — your own cert/key files"
+TLS_MODE_VALUE=$(read_default "TLS mode (internal/letsencrypt-dns/letsencrypt/custom)" "internal")
 
 CERT_FILE=""
 KEY_FILE=""
 ACME_EMAIL=""
+AWS_ACCESS_KEY_ID_VALUE=""
+AWS_SECRET_ACCESS_KEY_VALUE=""
+AWS_REGION_VALUE=""
+ROUTE53_HOSTED_ZONE_ID_VALUE=""
 case "$TLS_MODE_VALUE" in
   letsencrypt)
     ACME_EMAIL=$(read_default "Let's Encrypt email (expiry notices)" "")
     echo
-    echo "Note: Let's Encrypt cannot issue for DNS names that resolve only to private IPs."
-    echo "If your hostname points at 192.168.x.x / 10.x / etc., use TLS mode 'internal' instead."
+    echo "Note: HTTP-01 cannot issue when DNS resolves only to a private IP."
+    echo "For private A records on Route53, choose letsencrypt-dns instead."
+    ;;
+  letsencrypt-dns)
+    ACME_EMAIL=$(read_default "Let's Encrypt email (expiry notices)" "")
+    AWS_ACCESS_KEY_ID_VALUE=$(read_default "AWS_ACCESS_KEY_ID" "")
+    AWS_SECRET_ACCESS_KEY_VALUE=$(read_secret "AWS_SECRET_ACCESS_KEY")
+    AWS_REGION_VALUE=$(read_default "AWS_REGION" "us-east-1")
+    ROUTE53_HOSTED_ZONE_ID_VALUE=$(read_default "Route53 hosted zone ID (optional)" "")
+    [[ -n "$AWS_ACCESS_KEY_ID_VALUE" && -n "$AWS_SECRET_ACCESS_KEY_VALUE" ]] || {
+      echo "AWS access key and secret are required for letsencrypt-dns" >&2
+      exit 1
+    }
+    echo
+    echo "IAM: attach a policy like config/route53-acme-iam-policy.json (replace HOSTED_ZONE_ID)."
     ;;
   custom)
     CERT_FILE=$(read_default "Absolute certificate path" "/etc/ssl/certs/ollama.crt")
@@ -44,7 +73,7 @@ case "$TLS_MODE_VALUE" in
     ;;
   internal) ;;
   *)
-    echo "TLS_MODE must be internal, letsencrypt, or custom" >&2
+    echo "TLS_MODE must be internal, letsencrypt-dns, letsencrypt, or custom" >&2
     exit 1
     ;;
 esac
@@ -73,6 +102,10 @@ TLS_MODE=$TLS_MODE_VALUE
 TLS_CERT_FILE=$CERT_FILE
 TLS_KEY_FILE=$KEY_FILE
 ACME_EMAIL=$ACME_EMAIL
+AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID_VALUE
+AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY_VALUE
+AWS_REGION=$AWS_REGION_VALUE
+ROUTE53_HOSTED_ZONE_ID=$ROUTE53_HOSTED_ZONE_ID_VALUE
 OLLAMA_API_KEY=$API_KEY_VALUE
 OLLAMA_CONTEXT_LENGTH=$CONTEXT_VALUE
 OLLAMA_KEEP_ALIVE=$KEEP_ALIVE_VALUE
@@ -90,11 +123,12 @@ echo "Store that key in a password manager."
 case "$TLS_MODE_VALUE" in
   letsencrypt)
     echo
-    echo "Let's Encrypt requires:"
-    echo "  - A public DNS A/AAAA record for $HOSTNAME_VALUE pointing at a public WAN IP"
-    echo "  - TCP 80 reachable from the internet (ACME HTTP-01)"
-    echo "  - Split DNS so LAN clients resolve the name to the LAN IP"
-    echo "  - API stays LAN-only via Caddy remote_ip + UFW on 443"
+    echo "Let's Encrypt HTTP-01 requires a public WAN A record and TCP 80."
+    ;;
+  letsencrypt-dns)
+    echo
+    echo "Let's Encrypt DNS-01 via Route53: A record may stay private; no port 80 needed."
+    echo "First install builds a custom Caddy with the Route53 plugin (needs Go; a few minutes)."
     ;;
   internal)
     echo "Next after install: make export-ca, then trust the CA on each client."

@@ -86,8 +86,8 @@ import ipaddress, sys
 sys.exit(0 if ipaddress.ip_address(sys.argv[1]).is_private else 1)
 PY
     then
-      warn "Public DNS:" "$OLLAMA_HOSTNAME → $pub_ip (private). Let's Encrypt rejects RFC1918 A records."
-      warn "Fix:" "set the public A record to your WAN IP; use split-DNS/hairpin for LAN → LAN IP"
+      warn "Public DNS:" "$OLLAMA_HOSTNAME → $pub_ip (private). Let's Encrypt cannot issue for RFC1918 addresses."
+      warn "Fix:" "use TLS_MODE=internal (LAN-only), or point public DNS at a real WAN IP"
       fail=1
     else
       echo "Public DNS $OLLAMA_HOSTNAME: $pub_ip"

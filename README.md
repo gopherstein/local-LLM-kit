@@ -39,7 +39,7 @@ make doctor
 make install
 ```
 
-Default TLS mode is **letsencrypt**. The installer also pulls these models unless you change them:
+Default TLS mode is **internal** (LAN-only / private DNS). The installer also pulls these models unless you change them:
 
 - `qwen3-coder:30b`
 - `qwen2.5-coder:7b`
@@ -48,21 +48,11 @@ Model downloads are large and may take a while.
 
 ## TLS choices
 
-### Let's Encrypt — recommended when you control public DNS
+### Internal CA — recommended for LAN-only / private DNS
 
-Choose `letsencrypt` during `make configure` (the default).
+Choose `internal` during `make configure` (the default). This is the right mode when your hostname resolves to a private IP such as `192.168.x.x` by design.
 
-1. Create a public DNS **A** (and optional **AAAA**) record for your hostname pointing at this machine's public IP.
-2. Port-forward or otherwise expose **TCP 80** to the host so ACME HTTP-01 can succeed. TLS-ALPN on 443 is disabled so certificates still renew while 443 stays LAN-only.
-3. Keep **TCP 443** limited to your LAN (the installer adds that UFW rule). Clients on the LAN should resolve the hostname to the host's LAN IP (split DNS or hairpin NAT).
-
-No client CA install is required — the certificate is publicly trusted.
-
-Optional: provide an email during configure for expiry notices.
-
-### Internal CA — for a local-only hostname (`*.home.arpa`, etc.)
-
-Choose `internal` during `make configure`. Caddy creates a private certificate authority and issues the server certificate.
+Caddy creates a private certificate authority and issues the server certificate. No ports need to be exposed to the internet.
 
 Export its root certificate:
 
@@ -96,6 +86,19 @@ sudo security add-trusted-cert \
 sudo cp ollama-lan-root-ca.crt /usr/local/share/ca-certificates/ollama-lan.crt
 sudo update-ca-certificates
 ```
+
+### Let's Encrypt — only when public DNS points at a public IP
+
+Choose `letsencrypt` only if a **public** A/AAAA record points at your **WAN** IP and TCP 80 is reachable from the internet. Let's Encrypt will not issue certificates for names that resolve only to private RFC1918 addresses.
+
+Typical pattern:
+
+1. Public DNS A record → WAN IP.
+2. Port-forward TCP 80 to this host (ACME HTTP-01). TLS-ALPN on 443 is disabled so issuance still works while 443 stays LAN-only.
+3. Split DNS / hairpin so LAN clients resolve the hostname to the LAN IP.
+4. Keep TCP 443 limited to your LAN.
+
+Optional: provide an email during configure for expiry notices.
 
 ### Custom certificate
 

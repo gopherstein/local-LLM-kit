@@ -8,10 +8,25 @@ read_default() {
   printf '%s' "${var:-$default}"
 }
 
-HOSTNAME_VALUE=$(read_default "DNS hostname" "ollama.example.com")
-LAN_CIDR_VALUE=$(read_default "Allowed LAN CIDR" "192.168.1.0/24")
+guess_lan_cidr() {
+  local ip
+  ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')
+  if [[ "$ip" =~ ^([0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+$ ]]; then
+    printf '%s.0/24' "${BASH_REMATCH[1]}"
+  else
+    printf '192.168.1.0/24'
+  fi
+}
+
+HOSTNAME_VALUE=$(read_default "DNS hostname (LAN or split-DNS)" "ollama.home.arpa")
+LAN_CIDR_VALUE=$(read_default "Allowed LAN CIDR" "$(guess_lan_cidr)")
 MODELS_VALUE=$(read_default "Comma-separated models" "qwen3-coder:30b,qwen2.5-coder:7b")
-TLS_MODE_VALUE=$(read_default "TLS mode (letsencrypt/internal/custom)" "letsencrypt")
+echo
+echo "TLS modes:"
+echo "  internal     — LAN-only / private DNS (default; trust exported CA on clients)"
+echo "  letsencrypt  — needs a public A/AAAA record to a public WAN IP + port 80"
+echo "  custom       — your own cert/key files"
+TLS_MODE_VALUE=$(read_default "TLS mode (internal/letsencrypt/custom)" "internal")
 
 CERT_FILE=""
 KEY_FILE=""
@@ -19,6 +34,9 @@ ACME_EMAIL=""
 case "$TLS_MODE_VALUE" in
   letsencrypt)
     ACME_EMAIL=$(read_default "Let's Encrypt email (expiry notices)" "")
+    echo
+    echo "Note: Let's Encrypt cannot issue for DNS names that resolve only to private IPs."
+    echo "If your hostname points at 192.168.x.x / 10.x / etc., use TLS mode 'internal' instead."
     ;;
   custom)
     CERT_FILE=$(read_default "Absolute certificate path" "/etc/ssl/certs/ollama.crt")
@@ -26,7 +44,7 @@ case "$TLS_MODE_VALUE" in
     ;;
   internal) ;;
   *)
-    echo "TLS_MODE must be letsencrypt, internal, or custom" >&2
+    echo "TLS_MODE must be internal, letsencrypt, or custom" >&2
     exit 1
     ;;
 esac
@@ -73,8 +91,9 @@ case "$TLS_MODE_VALUE" in
   letsencrypt)
     echo
     echo "Let's Encrypt requires:"
-    echo "  - A public DNS A/AAAA record for $HOSTNAME_VALUE pointing at this host"
+    echo "  - A public DNS A/AAAA record for $HOSTNAME_VALUE pointing at a public WAN IP"
     echo "  - TCP 80 reachable from the internet (ACME HTTP-01)"
+    echo "  - Split DNS so LAN clients resolve the name to the LAN IP"
     echo "  - API stays LAN-only via Caddy remote_ip + UFW on 443"
     ;;
   internal)

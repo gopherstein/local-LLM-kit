@@ -57,6 +57,42 @@ if [[ -f .env ]]; then
       warn "DNS $OLLAMA_HOSTNAME:" "does not resolve on this host"
     fi
   fi
+  if [[ -n "${LAN_CIDR:-}" ]]; then
+    host_ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}')
+    if [[ -n "$host_ip" ]] && command -v python3 >/dev/null 2>&1; then
+      if python3 - "$host_ip" "$LAN_CIDR" <<'PY'
+import ipaddress, sys
+ip, cidr = sys.argv[1], sys.argv[2]
+sys.exit(0 if ipaddress.ip_address(ip) in ipaddress.ip_network(cidr, strict=False) else 1)
+PY
+      then
+        echo "LAN_CIDR $LAN_CIDR contains host $host_ip"
+      else
+        warn "LAN_CIDR mismatch:" "host is $host_ip but LAN_CIDR=$LAN_CIDR (API/healthz will 401 from this LAN)"
+        fail=1
+      fi
+    fi
+  fi
+  if [[ "${TLS_MODE:-}" == "letsencrypt" && -n "${OLLAMA_HOSTNAME:-}" ]]; then
+    pub_ip=""
+    if command -v dig >/dev/null 2>&1; then
+      pub_ip=$(dig +short "$OLLAMA_HOSTNAME" A @1.1.1.1 2>/dev/null | awk 'NR==1 && $1 ~ /^[0-9.]+$/ {print; exit}')
+    fi
+    if [[ -z "$pub_ip" ]]; then
+      warn "Public DNS:" "$OLLAMA_HOSTNAME has no A record at 1.1.1.1 — Let's Encrypt cannot issue"
+      fail=1
+    elif python3 - "$pub_ip" <<'PY'
+import ipaddress, sys
+sys.exit(0 if ipaddress.ip_address(sys.argv[1]).is_private else 1)
+PY
+    then
+      warn "Public DNS:" "$OLLAMA_HOSTNAME → $pub_ip (private). Let's Encrypt rejects RFC1918 A records."
+      warn "Fix:" "set the public A record to your WAN IP; use split-DNS/hairpin for LAN → LAN IP"
+      fail=1
+    else
+      echo "Public DNS $OLLAMA_HOSTNAME: $pub_ip"
+    fi
+  fi
 else
   warn "Config:" ".env missing — run make configure"
 fi
@@ -96,12 +132,19 @@ if [[ -n "${OLLAMA_HOSTNAME:-}" && -n "${OLLAMA_API_KEY:-}" ]]; then
 
   if systemctl is-active --quiet caddy 2>/dev/null; then
     printf '%-42s' "HTTPS https://$OLLAMA_HOSTNAME/healthz"
-    if body=$(curl_endpoint "https://$OLLAMA_HOSTNAME/healthz" 2>/dev/null) && [[ "$body" == "ok" ]]; then
+    health_err=$(mktemp)
+    if body=$(curl_endpoint "https://$OLLAMA_HOSTNAME/healthz" 2>"$health_err") && [[ "$body" == "ok" ]]; then
       echo OK
     else
       echo FAIL
       fail=1
+      err=$(tr '\n' ' ' <"$health_err" | sed 's/[[:space:]]\+/ /g')
+      [[ -n "$err" ]] && warn "  curl:" "$err"
+      if journalctl -u caddy --no-pager -n 80 2>/dev/null | grep -q 'acme:error:dns\|could not get certificate\|authorization failed'; then
+        warn "  TLS:" "Let's Encrypt has not issued a cert yet (see journalctl -u caddy)"
+      fi
     fi
+    rm -f "$health_err"
 
     printf '%-42s' "HTTPS /v1/models (bearer)"
     if models_json=$(curl_endpoint \

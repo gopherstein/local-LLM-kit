@@ -50,7 +50,9 @@ fi
 
 install -m 600 "$ENV_FILE" /etc/ollama-lan.env
 mkdir -p /etc/systemd/system/ollama.service.d /etc/systemd/system/caddy.service.d /var/log/caddy
-chown caddy:caddy /var/log/caddy
+# caddy runs as User=caddy; root-owned log files from validate/prior runs cause startup failure
+chown -R caddy:caddy /var/log/caddy
+chmod 755 /var/log/caddy
 
 sed \
   -e "s|__OLLAMA_CONTEXT_LENGTH__|${OLLAMA_CONTEXT_LENGTH:-32768}|g" \
@@ -109,9 +111,17 @@ set -a
 source /etc/ollama-lan.env
 set +a
 caddy validate --config /etc/caddy/Caddyfile
+# validate may create log files as root — fix ownership before service start
+chown -R caddy:caddy /var/log/caddy
 systemctl daemon-reload
 systemctl enable --now ollama caddy
 systemctl restart ollama caddy
+if ! systemctl is-active --quiet caddy; then
+  echo "Caddy failed to start. Recent logs:" >&2
+  systemctl --no-pager --full status caddy >&2 || true
+  journalctl -u caddy --no-pager -n 30 >&2 || true
+  exit 1
+fi
 
 # Firewall: never auto-enable UFW (can lock out SSH). Rules are idempotent by comment.
 ufw_ensure_comment "Ollama loopback only" deny 11434/tcp comment "Ollama loopback only"

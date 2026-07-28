@@ -74,7 +74,9 @@ case "$TLS_MODE" in
       GLOBAL_OPTIONS+=$'\n\temail '"${ACME_EMAIL}"
     fi
     # 443 stays LAN-only; issue/renew via HTTP-01 on public port 80.
-    GLOBAL_OPTIONS+=$'\n\tauto_https disable_tlsalpn_challenge\n}'
+    GLOBAL_OPTIONS+=$'\n\tcert_issuer acme {'
+    GLOBAL_OPTIONS+=$'\n\t\tdisable_tlsalpn_challenge'
+    GLOBAL_OPTIONS+=$'\n\t}\n}'
     ;;
   internal)
     GLOBAL_OPTIONS+=$'\n\tauto_https disable_redirects\n}'

@@ -103,6 +103,11 @@ pathlib.Path(dst).write_text(text)
 PY
 chmod 644 /etc/caddy/Caddyfile
 
+# caddy validate expands {$ENV} placeholders; load the same env systemd will use.
+set -a
+# shellcheck disable=SC1091
+source /etc/ollama-lan.env
+set +a
 caddy validate --config /etc/caddy/Caddyfile
 systemctl daemon-reload
 systemctl enable --now ollama caddy

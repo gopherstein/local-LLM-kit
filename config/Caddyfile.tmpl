@@ -9,6 +9,7 @@ __GLOBAL_OPTIONS__
 	}
 	handle @api {
 		reverse_proxy 127.0.0.1:11434 {
+			header_up Host 127.0.0.1:11434
 			flush_interval -1
 			transport http {
 				read_timeout 0
